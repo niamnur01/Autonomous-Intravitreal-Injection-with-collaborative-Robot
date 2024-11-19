@@ -7,6 +7,27 @@ This repository provide a ROS2 package, which implement the trajectory planning 
 - Ubuntu 22.04
 - [ROS2 Humble](https://docs.ros.org/en/humble/index.html)
 
+#### 1. Required dependencies
+Install the following dependendencies:
+```
+pip install setuptools==version wheel==version matplotlib==3.3.4 numpy==1.19.5 opencv-python==4.5.5 pandas==1.1.5
+Pillow==8.4.0 scipy==1.5.4 torch==1.10.1 torchvision==0.11.2 
+```
+```
+pip install git+https://github.com/hukkelas/DSFD-Pytorch-Inference.git
+```
+```
+pip3 install roboticstoolbox-python
+```
+
+#### 2. Nvida CUDA
+Verify if CUDA is installed on your system
+```
+nvidia-smi
+```
+If CUDA is installed, it will display the version of the driver and the supported CUDA version in the top-right corner.
+If CUDA is not present, follow the guide that can be found at this [link](https://developer.nvidia.com/cuda-downloads)
+
 ### L2CS-Net
 - Official git project [L2CS-Net](https://github.com/Ahmednull/L2CS-Net)
 - It only need a common RGB camera, a webcam
@@ -15,49 +36,20 @@ This repository provide a ROS2 package, which implement the trajectory planning 
 cd 
 git clone https://github.com/Ahmednull/L2CS-Net
 ```
-#### 2. Add dataset path finding function:
-```
-cd ~/L2CS/l2cs
-touch dataset_path.py
-```
-- Copy following lines in the dataset_path.py file
-```
-import pathlib
+#### 2. Add pretrained model:
 
-def getDataset():
-    CWD = pathlib.Path.cwd() / 'models' / 'L2CSNet_gaze360.pkl'
-    return CWD
-```
-#### 3. Modify init.py file:
-```
-cd ~/L2CS/l2cs
-```
-Open __init__.py and append the following lines:
-- Append under the other import:
-```
-from dataset_path import getDataset
-```
-- Append inside the square bracket as last item:
-```
-'getDataset'
-```
-#### 3. Download dataset:
-```
-cd ~/L2CS/l2cs
-mkdir models
-cd models
-```
-- Download Gaze360 dataset from [here](http://gaze360.csail.mit.edu/download.php) inside this directory
-- Otherwise you can check [L2CS-Net](https://github.com/Ahmednull/L2CS-Net) other dataset proposal
+Dowload L2CSNet_gaze360.pkl located in Gaze360 at this [link](https://drive.google.com/drive/folders/17p6ORr-JQJcw-eYtG2WGNiuS_qVKwdWd?usp=sharing)
 
-#### 4. Create python library:
+Copy the folder in ~/L2CS-Net/models
+
+#### 3. Create python library:
 ```
-cd ~/L2CS/l2cs
-pip install [-e] .
+cd ~/L2CS-Net
+pip install .
 ```
 Now you should be able to import the package with the following command:
 ```
-$ python
+$ python3
 >>> import l2cs
 ```
 
@@ -119,7 +111,8 @@ cd $HOME/ros2_ws/
 colcon build --symlink-install
 ```
 #### 6. Controllers
-In order to use this ROS2 package you need to have an existing controller subscribing to the **target_frame** topic, reading a **geometry_msgs/PoseStamped** message.
+The controllers used in this project make use of a GitHub repository which is no longer available.
+This part will be updated in the future
 
 ## Running the planning    
 #### 0. Source terminals
@@ -130,12 +123,8 @@ source $HOME/ros2_ws/install/setup.bash
 #### 2. Run the nodes:
 Assuming that a controller is already running you can run the two nodes in separate terminal:
 ```
-ros2 run test1 eye_tracking
+ros2 run ur3_injection_controller eye_tracking
 ```
 ```
-ros2 run test1 ur3_injection
+ros2 run ur3_injection_controller ur3_injection
 ```
-#### 3. (Optional)Rviz simulation:
-If your controller open an Rviz window you can visualize the eye adding a Marker.
-- Add a Marker
-- In the topic write **visualization_marker**
