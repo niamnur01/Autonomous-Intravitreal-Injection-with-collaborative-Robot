@@ -1,253 +1,242 @@
 #!/usr/bin/env python3
-
+"""
+ROS2 node that continuously queries the Pose service, prints the returned quaternion,
+pre-rotates it, and visualizes the eye frame, eyeball, iris, and pupil in RViz.
+"""
 import rclpy
 from rclpy.node import Node
-
 from project_interfaces.srv import Pose
-from geometry_msgs.msg import PoseStamped, TransformStamped
-
-from tf2_ros.transform_listener import TransformListener
-from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-from tf2_ros.buffer import Buffer
-from tf2_ros import TransformException
-
-from roboticstoolbox import quintic, mtraj, ctraj
-from spatialmath import SE3, UnitQuaternion
 import time
+
+from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Point
+from visualization_msgs.msg import Marker, MarkerArray
+from tf2_ros.transform_broadcaster import TransformBroadcaster
+
 import numpy as np
-from transforms3d import euler
+import transforms3d.euler as euler
 import pyquaternion as pyq
+import transforms3d.quaternions as quat
 
-# Constant values
-FREQUENCY = 500
-TIME_STEP = 1/FREQUENCY
 
-# Multiply time in seconds
-APPROACHING_STEPS = FREQUENCY * 3
-SUBSEQUENCE_STEPS = int(FREQUENCY * 0.1)
+# Constants
+FREQUENCY = 20  # polling rate in Hz
+TIME_STEP = 1.0 / FREQUENCY
+EYE_FRAME = 'eye_frame'
+PARENT_FRAME = 'base_link'
+EYE_POSITION = (-0.05, 0.44974, 0.45)  # [m]
+EYE_RADIUS = 0.015  # [m]
+SIZE = 1.0  # scaling factor for markers
 
-class Ur3_controller(Node):
+class PosePrinter(Node):
     def __init__(self):
-        # Initializing class
-        super().__init__('ur3_controller')
-        
-        # Creating client(eye-tracking) to get pose
-        self.cli = self.create_client(Pose, 'test1')
+        super().__init__('pose_printer')
 
-        # Waiting for eye-tracking to start
+        # for 5-second logging
+        self._last_log_time = time.time()
+
+        # Create client for the Pose service
+        self.cli = self.create_client(Pose, 'gazeSrv')
+        # Wait until the service is available
         while not self.cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('service not available, waiting again...')
+            self.get_logger().info('Service not available, waiting again...')
+        self.get_logger().info('Connected to Pose service.')
+
+        # Prepare request
         self.req = Pose.Request()
 
-        # Creating publisher to publish planning
-        self.publisher = self.create_publisher(PoseStamped, 'target_frame', 10)
+        ##Define vector rotation for injection trajectory, prepare rotation matrix for environment_building
+        yaw_deg = 50# or any value within [-80, 80] for left eye, and [100, 260] for right eye
+        pitch_deg = 45.5 # or a sample within [44.5, 46.5]
+        R_pitch = euler.euler2mat(0, np.deg2rad(pitch_deg), 0, 'sxyz')
+        R_yaw = euler.euler2mat(0, 0, np.deg2rad(yaw_deg), 'sxyz')
+        self.R_inject = R_yaw @ R_pitch
 
-        # Getting current configuration 
-        self.get_initial_pose()
+        # RViz publishers
+        self.tf_broadcaster = TransformBroadcaster(self)
+        self.marker_array_pub = self.create_publisher(MarkerArray, 'visualization_marker_array', 10)
+        self.current_position = EYE_POSITION
 
-        # Setting target position
-        self.target_position = (0.30, 0.35, 0.35)
-#        self.target_position = (0.25, 0.30, 0.30)
-#        self.target_position = (self.current_pose[0], self.current_pose[1], self.current_pose[2])
-
-        orientation = self.rotating_orientation_toward_target(np.array([1.0, 0.0, 0.0, 0.0]))
-        self.target_position = (self.target_position[0], self.target_position[1], self.target_position[2],  orientation[0], orientation[1], orientation[2], orientation[3])
-
-        # Setting safe distance from the center of the eye
-        self.safe_distance = 0.02
-#        self.safe_distance = 0.0
-
-        # Publishing frame with safe distance included, (USED IN SIMULATION)
-        self.publish_RCM_frame()
-        
-        # Complete motion execution
-        self.get_logger().info('Target approaching')
-        self.approaching_target_position()
-
-        self.get_logger().info('Simulating eye movement')
-        self.eye_movement()
-
-        self.get_logger().info('Performance finished')
-
-    def publish_RCM_frame(self):
-        # RCM is the Remote Center of Motion
-        self.tf_static_broadcaster = StaticTransformBroadcaster(self)
-        t = TransformStamped()
-
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'wrist_3_link'
-        t.child_frame_id = 'RCM_frame'
-
-        t.transform.translation.x = 0.0
-        t.transform.translation.y = 0.0
-        t.transform.translation.z = self.safe_distance
-
-        t.transform.rotation.w = 1.0
-        t.transform.rotation.x = 0.0
-        t.transform.rotation.y = 0.0
-        t.transform.rotation.z = 0.0
-
-        self.tf_static_broadcaster.sendTransform(t)
-
-    def get_initial_pose(self):
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        waiting_pose = True
-
-        # Waiting to read the current pose 
-        while waiting_pose:           
-            try:
-                future = self.tf_buffer.wait_for_transform_async(
-                        'base_link',
-                        'wrist_3_link',
-                        rclpy.time.Time()
-                        )
-                rclpy.spin_until_future_complete(self, future)
-                trans = self.tf_buffer.lookup_transform(
-                    'base_link',
-                    'wrist_3_link',
-                    rclpy.time.Time()
-                    )
-                self.current_pose = (   trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z,
-                                        trans.transform.rotation.w, trans.transform.rotation.x, trans.transform.rotation.y, trans.transform.rotation.z)
-                waiting_pose = False
-            except TransformException as ex:
-                self.get_logger().info(f'Could not transform: {ex}')
-    
-    def trajectory_planning(self, initial_pose, final_pose, steps):
-
-        # Computing homogeneous transformation matrix of initial position
-        position = [initial_pose[0], initial_pose[1], initial_pose[2]]
-        orientation = [initial_pose[3], initial_pose[4], initial_pose[5], initial_pose[6]]
-        T1 = SE3.Rt(UnitQuaternion(orientation).R, position)
-
-        # Computing homogeneous transformation matrix of final position
-        position = [final_pose[0], final_pose[1], final_pose[2]]
-        orientation = [final_pose[3], final_pose[4], final_pose[5], final_pose[6]]
-        T2 = SE3.Rt(UnitQuaternion(orientation).R, position)
-
-        self.trajectory = []
-        tmp = ctraj(T1, T2, steps)
-
-        # Exporting trajectory as a list of position
-        for i in range(len(tmp)):
-            quat = pyq.Quaternion(matrix=tmp[i].R).normalised
-            self.trajectory.append([tmp[i].t[0], tmp[i].t[1], tmp[i].t[2], quat.w, quat.x, quat.y, quat.z])
-                               
-    def approaching_target_position(self):
-        # Target neutral orientation
-        orientation = self.rotating_orientation_toward_target(np.array([1.0, 0.0, 0.0, 0.0]))
-
-        # Target position adding safe distance
-        position = np.array([self.target_position[0], self.target_position[1], self.target_position[2]])
-        position = self.traslate_position_from_RCM(position, orientation, self.safe_distance)
-        
-        # Computing trajectory
-        arriving_pose = np.concatenate((position, orientation))
-        self.trajectory_planning(self.current_pose, arriving_pose, APPROACHING_STEPS)
-
-        # Publishing the trajectory
-        self.publish_trajectory()
-    
-    def eye_movement(self):
-        while True:
-            # Finding arriving orientation
-            orientation  = self.get_eye_orientation(0)
-            orientation  = self.rotating_orientation_toward_target(orientation)
-
-            # Finding arring position, adding safe distance 
-            position = np.array([self.target_position[0], self.target_position[1], self.target_position[2]])
-            position = self.traslate_position_from_RCM(position, orientation, self.safe_distance)
-
-            # Computing trajectory
-            arriving_pose = np.concatenate((position, orientation))
-            self.trajectory_planning(self.current_pose, arriving_pose, SUBSEQUENCE_STEPS)
-
-            # Publishing the trajectory
-            self.publish_trajectory()
-
-    def traslate_position_from_RCM(self, position, orientation, traslation):
-        # Finding the conjugate of the orientation, to compute transformation
-        q = orientation
-        q_conjugate = np.array([q[0], -q[1], -q[2], -q[3]])
-
-        # Normalizing traslation, in order to use quaternions
-        # Computing traslation oriented as orientation, q * traslation * q_conjugate
-        traslation = self.quaternion_multiply(q, np.array([0, 0, 0, -traslation]))
-        traslation = self.quaternion_multiply(traslation, q_conjugate)
-
-        # Adding traslation
-        p_traslated = np.array([position[0] + traslation[1], position[1] + traslation[2], position[2] + traslation[3]])
-        return p_traslated
-    
-    def get_eye_orientation(self, request):
-        # Sending request to the server
-        self.req.r = request
-        future = self.cli.call_async(self.req)
-
-        # Waiting for the response
-        rclpy.spin_until_future_complete(self, future)
-        response = future.result()
-
-        # Saving response in an array 
-        q = np.array([response.w, response.x, response.y, response.z])
-
-        return q
-    
-    def rotating_orientation_toward_target(self, orientation):
-        # Rotating the end-effector towards the target_position
-        alpha = np.arctan2(self.target_position[1], self.target_position[0]) - np.pi/2
-        q_trans = euler.euler2quat(alpha, 0, -np.pi/2, 'rzyx')
-        q = self.quaternion_multiply(q_trans, orientation)
-
-        return q
-    
-    def publish_pose(self, position, orientation):
-        msg = PoseStamped()
-
-        msg.header.frame_id = "base_link"
-        msg.header.stamp = self.get_clock().now().to_msg()
-
-        msg.pose.position.x = position[0]
-        msg.pose.position.y = position[1]
-        msg.pose.position.z = position[2]
-
-        msg.pose.orientation.w = orientation[0]
-        msg.pose.orientation.x = orientation[1]
-        msg.pose.orientation.y = orientation[2]
-        msg.pose.orientation.z = orientation[3]
-        
-        self.current_pose = np.concatenate((position, orientation))
-        self.publisher.publish(msg)
-    
-    def publish_trajectory(self):
-        step = 1
-        while step < len(self.trajectory):            
-            pose = self.trajectory[step]
-
-            position = (pose[0], pose[1], pose[2])
-            orientation = (pose[3], pose[4], pose[5], pose[6])
-
-            self.publish_pose(position, orientation)
-
-            time.sleep(TIME_STEP)     
-            step += 1
-
-    def quaternion_multiply(self, quaternion1, quaternion0):
-        q1 = pyq.Quaternion(quaternion1)
-        q0 = pyq.Quaternion(quaternion0)
-
-        q = q1*q0
+    def quaternion_multiply(self, q1_arr, q0_arr):
+        q1 = pyq.Quaternion(q1_arr)
+        q0 = pyq.Quaternion(q0_arr)
+        q = q1 * q0
         return np.array([q.w, q.x, q.y, q.z])
-    
-def main():
-    rclpy.init()
 
-    ur3_controller = Ur3_controller()
-    rclpy.spin(ur3_controller)
+    def run(self):
+        # Main loop
+        while rclpy.ok():
+            # Call service
+            future = self.cli.call_async(self.req)
+            rclpy.spin_until_future_complete(self, future)
 
-    ur3_controller.destroy_node()
-    rclpy.shutdown()
+            if future.done() and future.result() is not None:
+                resp = future.result()
+                # Raw quaternion
+                eye_q = np.array([resp.w, resp.x, resp.y, resp.z])
+                # Print
+                #self.get_logger().info(
+                #    f"Received quaternion -> w: {resp.w:.4f}, x: {resp.x:.4f}, y: {resp.y:.4f}, z: {resp.z:.4f}"
+                #)
+                # Visualize
+                self.environment_building(eye_q)
+            else:
+                self.get_logger().warn('Service call failed or no response.')
+
+            time.sleep(TIME_STEP)
+
+    def publish_eye_and_arrow(self, eyeball, iris, pupil, arrow):
+        ma = MarkerArray()
+        ma.markers.extend([eyeball, iris, pupil, arrow])
+        self.marker_array_pub.publish(ma)
+
+    def environment_building(self, eye_q):
+        # Compute pre-rotation quaternion based on eye position to set the spawning eye orientation
+        q_trans = euler.euler2quat(np.pi, 0, -np.pi/2, 'rzyx')  # returns w,x,y,z
+        # Combined quaternion for eye gaze and eye frame rotation (for injection_vector)
+        w, x, y, z = self.quaternion_multiply(q_trans, eye_q)
+
+        #Create the vector to visualize the injection trajectory
+        ##rotate the local [0, 0, EYE_RADIUS] into the world
+        v_rotated = self.R_inject @ np.array([0, 0, EYE_RADIUS*3])
+        q_frame = [w, x, y, z]
+        R_frame = quat.quat2mat(q_frame)
+        v_world = R_frame @ v_rotated
+
+        #injection point
+        position_world = self.current_position + v_world
+
+        # Publish transform
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = PARENT_FRAME
+        t.child_frame_id = EYE_FRAME
+        t.transform.translation.x = self.current_position[0]
+        t.transform.translation.y = self.current_position[1]
+        t.transform.translation.z = self.current_position[2]
+        t.transform.rotation.w = w
+        t.transform.rotation.x = x
+        t.transform.rotation.y = y
+        t.transform.rotation.z = z
+        self.tf_broadcaster.sendTransform(t)
+
+        # 1) Eyeball
+        eyeball = Marker()
+        eyeball.header.frame_id = EYE_FRAME
+        eyeball.header.stamp    = t.header.stamp
+        eyeball.ns   = 'eye_viz'
+        eyeball.id   = 0
+        eyeball.type = Marker.SPHERE
+        eyeball.action            = Marker.ADD
+        eyeball.pose.position.x   = 0.0
+        eyeball.pose.position.y   = 0.0
+        eyeball.pose.position.z   = 0.0
+        eyeball.pose.orientation.w = 1.0
+        eyeball.scale.x = 2 * EYE_RADIUS
+        eyeball.scale.y = 2 * EYE_RADIUS
+        eyeball.scale.z = 2 * EYE_RADIUS
+        eyeball.color.a = 1.0
+        eyeball.color.r = 1.0
+        eyeball.color.g = 1.0
+        eyeball.color.b = 1.0
+
+        # 2) Iris
+        iris = Marker()
+        iris.header = eyeball.header
+        iris.ns     = eyeball.ns
+        iris.id     = 1
+        iris.type   = Marker.SPHERE
+        iris.action            = Marker.ADD
+        iris.pose.position.x   = 0.0
+        iris.pose.position.y   = 0.0
+        iris.pose.position.z   = EYE_RADIUS
+        iris.pose.orientation.w = 1.0
+        iris.scale.x = 0.015 * SIZE
+        iris.scale.y = 0.015 * SIZE
+        iris.scale.z = 0.006  * SIZE
+        iris.color.a = 1.0
+        iris.color.r = 0.0
+        iris.color.g = 150.0/255.0
+        iris.color.b = 0.0
+
+        # 3) Pupil
+        pupil = Marker()
+        pupil.header = eyeball.header
+        pupil.ns     = eyeball.ns
+        pupil.id     = 2
+        pupil.type   = Marker.SPHERE
+        pupil.action            = Marker.ADD
+        pupil.pose.position.x   = 0.0
+        pupil.pose.position.y   = 0.0
+        pupil.pose.position.z   = EYE_RADIUS + 0.003
+        pupil.pose.orientation.w = 1.0
+        pupil.scale.x = 0.006   * SIZE
+        pupil.scale.y = 0.006   * SIZE
+        pupil.scale.z = 0.0015 * SIZE
+        pupil.color.a = 1.0
+        pupil.color.r = 0.0
+        pupil.color.g = 0.0
+        pupil.color.b = 0.0
+
+        #Arrow for injection trajectory
+        arrow = Marker()
+        arrow.header.frame_id = PARENT_FRAME
+        arrow.header.stamp = t.header.stamp
+        arrow.ns = 'injection_vector'
+        arrow.id = 3
+        arrow.type = Marker.ARROW
+        arrow.action = Marker.ADD
+        #start at the eye center, end at the injection point
+        start = Point(x=self.current_position[0], y=self.current_position[1], z=self.current_position[2])
+        end = Point(x=position_world[0], y=position_world[1], z=position_world[2])
+        arrow.points = [start, end]
+        #shaft, head diameter and lenght
+        arrow.scale.x = 0.002 #shaft
+        arrow.scale.y = 0.005 #head
+        arrow.scale.z = 0.01 #lenght
+        arrow.color.r = 1.0
+        arrow.color.g = 0.0
+        arrow.color.b = 0.0
+        arrow.color.a = 1.0
+
+        # build a rotation from [0,0,1]→v_world
+        v_inj = np.array([start.x-end.x, start.y-end.y, start.z-end.z])
+        v_norm = v_inj / np.linalg.norm(v_inj)
+        self.get_logger().info(
+            f"Normalized injetion vector"
+            f"[{v_norm[0]:.4f}, {v_norm[1]:.4f}, {v_norm[2]:.4f}]")
+        world_z = np.array([0.0, 0.0, 1.0])
+        axis = np.cross(world_z, v_norm)
+        if np.linalg.norm(axis) < 1e-6:
+            q_vec = pyq.Quaternion()  # identity if already aligned
+        else:
+            axis /= np.linalg.norm(axis)
+            angle = np.arccos(np.dot(world_z, v_norm))
+            q_vec = pyq.Quaternion(axis=axis, angle=angle)
+         # log every 5 seconds
+        now = time.time()
+        if now - self._last_log_time >= 5.0:
+            self.get_logger().info(
+                f"Injection‐vector quaternion → "
+                f"w={q_vec.w:.4f}, x={q_vec.x:.4f}, "
+                f"y={q_vec.y:.4f}, z={q_vec.z:.4f}"
+            )
+            self._last_log_time = now
+
+        #publish all the markers
+        self.publish_eye_and_arrow(eyeball, iris, pupil, arrow)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PosePrinter()
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

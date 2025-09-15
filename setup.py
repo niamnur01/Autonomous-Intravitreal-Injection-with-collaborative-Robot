@@ -22,7 +22,10 @@ setup(
         'console_scripts': [
             'ur3_injection = ur3_injection_controller.ur3_injection:main',
             'eye_tracking = ur3_injection_controller.eye_tracking:main',
-            'ur3_eye_motion = tesur3_injection_controllert1.ur3_eye_motion:main'
+            'eye_sphere_tracker = ur3_injection_controller.eye_sphere_tracker:main',
+            'ur3_eye_motion = ur3_injection_controller.ur3_eye_motion:main',
+            'gaze_replayer = ur3_injection_controller.gaze_replayer:main',
+            'injection_path_planner = ur3_injection_controller.injection_path_planner:main'
         ],
     },
 )

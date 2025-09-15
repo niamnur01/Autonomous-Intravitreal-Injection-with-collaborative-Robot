@@ -27,10 +27,8 @@ from collections import deque
 from transforms3d import euler
 
 from project_interfaces.srv import Pose
-from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import Float64MultiArray, MultiArrayLayout
 
-from tf2_ros.transform_broadcaster import TransformBroadcaster
-from visualization_msgs.msg import  Marker
 import pyquaternion as pyq
 
 from filterpy.kalman import KalmanFilter
@@ -124,17 +122,13 @@ class MinimalService(Node):
         self.buffer.append(np.array([ROLL,PITCH,YAW]))
 
         # Creating service to deliver eye orientation
-        self.srv = self.create_service(Pose, 'test1', self.service_callback)
+        self.srv = self.create_service(Pose, 'gazeSrv', self.service_callback)
 
-        # Setting position
-        self.current_position = (0.30, 0.35, 0.35)
+        # Creating publisher to publish Yaw and Pitch to /eye_gaze topic
+        self.gaze_publisher = self.create_publisher(Float64MultiArray, 'eye_gaze', 10)
 
-        # Setting angle limit to 45°, which is nearly 0.7 in radiant
-        self.angle_limit = 0.7
-
-        # Creating publisher to publish eye object in the simulation (RVIZ)
-        self.marker_publisher = self.create_publisher(Marker, 'visualization_marker', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
+        # Setting angle limit to 70°, which is nearly 1.22 in radiant
+        self.angle_limit = 1.22
 
         # Creating timer to perform routine
         self.timer = self.create_timer(1/ROUTINE_FREQUENCY, self.routine)
@@ -154,7 +148,7 @@ class MinimalService(Node):
         x = self.kalman_filter.x
         self.roll, self.pitch, self.yaw = x[0], x[1], x[2]
 
-        self.environment_building()
+        self.publish_eye_gaze(self.yaw, self.pitch)
 
     def angle_limit_control(self, angle, limit_rad):
         # Controlling limit
@@ -176,27 +170,27 @@ class MinimalService(Node):
         filter.x = np.concatenate((z, v), axis=0)
 
         filter.R = np.array([[5.0, 0.0, 0.0],
-                        [0.0, 5.0, 0.0],
-                        [0.0, 0.0, 5.0]])
+                             [0.0, 5.0, 0.0],
+                             [0.0, 0.0, 5.0]])
         
         filter.P = np.array([[1000.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        [0.0, 1000.0, 0.0, 0.0, 0.0, 0.0],
-                        [0.0, 0.0, 1000.0, 0.0, 0.0, 0.0],
-                        [0.0, 0.0, 0.0, 1000.0, 0.0, 0.0],
-                        [0.0, 0.0, 0.0, 0.0, 1000.0, 0.0],
-                        [0.0, 0.0, 0.0, 0.0, 0.0, 1000.0]])
+                             [0.0, 1000.0, 0.0, 0.0, 0.0, 0.0],
+                             [0.0, 0.0, 1000.0, 0.0, 0.0, 0.0],
+                             [0.0, 0.0, 0.0, 1000.0, 0.0, 0.0],
+                             [0.0, 0.0, 0.0, 0.0, 1000.0, 0.0],
+                             [0.0, 0.0, 0.0, 0.0, 0.0, 1000.0]])
 
         filter.H = np.array([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
+                             [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                             [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]])
         
         d_t = 0.1
         filter.F = np.array([[1.0, 0.0, 0.0, d_t, 0.0, 0.0],
-                        [0.0, 1.0, 0.0, 0.0, d_t, 0.0],
-                        [0.0, 0.0, 1.0, 0.0, 0.0, d_t],
-                        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-                        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
-                        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]])
+                             [0.0, 1.0, 0.0, 0.0, d_t, 0.0],
+                             [0.0, 0.0, 1.0, 0.0, 0.0, d_t],
+                             [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                             [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                             [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]])
 
         return filter
 
@@ -214,104 +208,13 @@ class MinimalService(Node):
         self.get_logger().info('Orientation sended: [w: %f, x: %f, y: %f, z: %f]' % (response.w, response.x, response.y, response.z))
 
         return response
-
-    def quaternion_multiply(self, quaternion1, quaternion0):
-        q1 = pyq.Quaternion(quaternion1)
-        q0 = pyq.Quaternion(quaternion0)
-        q = q1*q0
-
-        return np.array([q.w, q.x, q.y, q.z])
     
-    def environment_building(self):
-        # Getting current orientation
-        q = euler.euler2quat(self.roll, self.pitch, self.yaw, 'rzyx')  
+    def publish_eye_gaze(self, yaw, pitch):
+        gaze_msg = Float64MultiArray()
+        gaze_msg.layout = MultiArrayLayout(dim=[], data_offset=0)
+        gaze_msg.data = [yaw, pitch]
+        self.gaze_publisher.publish(gaze_msg)
 
-        # Rotate quaternion based on current position
-        alpha = np.arctan2(self.current_position[1], self.current_position[0]) - np.pi/2 + np.pi
-        q_trans = euler.euler2quat(alpha, 0, -np.pi/2, 'rzyx')
-        w, x, y, z = self.quaternion_multiply(q_trans, q)
-
-        # Scaling the eye dimension in visualization
-        size = 1.0
-   
-        # Publishing eye frame
-        t = TransformStamped()
-
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'base_link'
-        t.child_frame_id = 'eye_frame'
-
-        t.transform.translation.x = self.current_position[0]
-        t.transform.translation.y = self.current_position[1]
-        t.transform.translation.z = self.current_position[2]
-
-        t.transform.rotation.w = w
-        t.transform.rotation.x = x
-        t.transform.rotation.y = y
-        t.transform.rotation.z = z
-
-        self.tf_broadcaster.sendTransform(t)
-
-        # Creating eye object
-        marker = Marker()
-
-        # Publishing eye-ball
-        marker.header.frame_id = "eye_frame"
-        marker.header.stamp = self.get_clock().now().to_msg()
-
-        marker.ns = "my_namespace"
-        marker.id = 0
-
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-
-        marker.pose.position.x = 0.0
-        marker.pose.position.y = 0.0
-        marker.pose.position.z = 0.0
-
-        marker.pose.orientation.w = 1.0
-        marker.pose.orientation.x = 0.0
-        marker.pose.orientation.y = 0.0
-        marker.pose.orientation.z = 0.0
-
-        marker.scale.x = 0.05 * size
-        marker.scale.y = 0.05 * size
-        marker.scale.z = 0.05 * size
-
-        marker.color.a = 1.0
-        marker.color.r = 255.0 / 255.0
-        marker.color.g = 255.0 / 255.0
-        marker.color.b = 255.0 / 255.0
-        
-        self.marker_publisher.publish(marker)
-
-        # Publishing eye iris
-        marker.id = 1
-        marker.pose.position.z = 0.02 * size
-
-        marker.scale.x = 0.025 * size
-        marker.scale.y = 0.025 * size
-        marker.scale.z = 0.01 * size
-
-        marker.color.r = 0.0 / 255.0
-        marker.color.g = 150.0 / 255.0
-        marker.color.b = 0.0 / 255.0
-        
-        self.marker_publisher.publish(marker)
-
-        # Publishing eye pupil
-        marker.id = 2
-        marker.pose.position.z = 0.025 * size
-
-        marker.scale.x = 0.01 * size
-        marker.scale.y = 0.01 * size
-        marker.scale.z = 0.0025 * size
-
-        marker.color.r = 0.0 / 255.0
-        marker.color.g = 0.0 / 255.0
-        marker.color.b = 0.0 / 255.0
-
-        self.marker_publisher.publish(marker)
 
 def main(args=None):
     t1 = threading.Thread(target=eye_tracking,args=())
