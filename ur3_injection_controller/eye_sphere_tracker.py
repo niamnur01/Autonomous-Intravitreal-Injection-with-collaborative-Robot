@@ -10,9 +10,10 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from message_filters import Subscriber, ApproximateTimeSynchronizer
+import argparse
 
 class EyeSphereTracker(Node):
-    def __init__(self):
+    def __init__(self, need_frames: int = 5):
         #Near-far clipping plane of the coppeliasim depth sensor. Usend to un-normalize the depth measures    
         self.near = 0.50  # m
         self.far  = 0.80  # m
@@ -38,8 +39,16 @@ class EyeSphereTracker(Node):
         )
 
         # Landmark indices per eye
-        self.left_idxs  = [157,158,159,160,153,145,144,163]
-        self.right_idxs = [384,385,386,387,390,380,374,373]
+        self.left_idxs  = [157,158,159,160,153,145,144,163,469,470,471,472]
+        self.right_idxs = [384,385,386,387,390,380,374,373,474,475,476,477]
+        '''For future improvements:
+            when refine_landmarks=True, the iris landmarks are available, landmarks id are
+            Left iris ring (excluding the center): 469, 470, 471, 472
+            Right iris ring (excluding the center): 474, 475, 476, 477
+
+            This additional landmarks could prove useful when the current ones are unsufficient
+            The bulge of the eye caused by the cornea starts exactly around the iris, so this 8 points shoul still belong to the spherical part of the eye
+        '''
 
         # Camera intrinsics
         self.W = self.H = 1080
@@ -51,10 +60,10 @@ class EyeSphereTracker(Node):
         # World transform
         R = np.array([[-1,0,0],[0,0,-1],[0,-1,0]])
         self.R_to_world = R.T
-        self.T = np.array([-0.0161, -0.14575, 0.42239])
+        self.T = np.array([-0.1301, -0.24275, 0.60139])
 
         # Calibration storage
-        self._need_frames = 50
+        self._need_frames = int(need_frames)
         self._count = 0
         self._left_centers = []
         self._right_centers = []
@@ -111,6 +120,12 @@ class EyeSphereTracker(Node):
             return self.R_to_world.dot(cpl) + self.T
         lw = cam2world(lc)
         rw = cam2world(rc)
+        # per-frame logging
+        self.get_logger().info(
+            f"[Frame {self._count+1}] Left (world): ({lw[0]:.17f}, {lw[1]:.17f}, {lw[2]:.17f}); "
+            f"Right (world): ({rw[0]:.17f}, {rw[1]:.17f}, {rw[2]:.17f}); "
+            #f"r_L={lr:.4f} m, r_R={rr:.4f} m"
+        )
 
         # 5) Store
         self._left_centers.append(lw)
@@ -193,8 +208,14 @@ def get_depth_median(self, depth_img: np.ndarray, u: int, v: int, patch: int = 1
 
 
 def main():
-    rclpy.init()
-    node = EyeSphereTracker()
+    # Parse CLI options BEFORE creating the node
+    parser = argparse.ArgumentParser(description="EyeSphereTracker runtime config")
+    parser.add_argument("--calib-frames", type=int, default=1, help="Number of frames to collect for calibration")
+     # allow ROS2 to parse its own args too
+    args, ros_args = parser.parse_known_args()
+
+    rclpy.init(args=ros_args)
+    node = EyeSphereTracker(need_frames=args.calib_frames)
     try:
         rclpy.spin(node)
     finally:

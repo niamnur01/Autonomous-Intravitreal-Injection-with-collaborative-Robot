@@ -5,6 +5,7 @@ Publishes prerecorded gaze data on /eye_gaze **and** serves the latest
 orientation quaternion on /gazeSrv (Pose service).
 """
 
+import os
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float64MultiArray, MultiArrayLayout
@@ -23,7 +24,11 @@ class EyeGazeReplayer(Node):
         # ────── publisher (unchanged) ───────────────────────────────────────
         self.publisher_ = self.create_publisher(Float64MultiArray,
                                                 '/eye_gaze', 10)
-        self.data = self.load_data("eye_movement.txt")
+        
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        file_path = os.path.join(script_dir, "test", "eye_movement.txt")
+        self.data = self.load_data(file_path)
+        
         self.timer_period = 0.1    # 10 Hz
         self.index = 0
 

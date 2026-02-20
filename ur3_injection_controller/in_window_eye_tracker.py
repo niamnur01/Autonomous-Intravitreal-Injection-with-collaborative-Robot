@@ -67,8 +67,16 @@ class EyeSphereTracker(Node):
         )
 
         # The 8 corneal‐rim landmarks per eye
-        self.left_idxs  = [157, 158, 159, 160, 153, 145, 144, 163]
-        self.right_idxs = [384, 385, 386, 387, 390, 380, 374, 373]
+        self.left_idxs  = [157, 158, 159, 160, 153, 145, 144, 163, 469, 470, 471, 472]
+        self.right_idxs = [384, 385, 386, 387, 390, 380, 374, 373, 474, 475, 476, 477]
+        '''For future improvements:
+            when refine_landmarks=True, the iris landmarks are available, landmarks id are
+            Left iris ring (excluding the center): 469, 470, 471, 472
+            Right iris ring (excluding the center): 474, 475, 476, 477
+
+            This additional landmarks could prove useful when the current ones are unsufficient
+            The bulge of the eye caused by the cornea starts exactly around the iris, so this 8 points shoul still belong to the spherical part of the eye
+        '''
 
         # Camera intrinsics via FOV + resolution
         self.W, self.H = 1080, 1080
@@ -180,7 +188,7 @@ class EyeSphereTracker(Node):
                     [ 0,  0, -1],
                     [ 0, -1,  0]])
         R_toWorld = R.T
-        T = np.array([-0.0161, -0.14575, +0.42239])   #Camera Position in the world
+        T = np.array([-0.1301, -0.24275, 0.60139])   #Camera Position in the world
 
         # do your world‐frame
         left_world = R_toWorld.dot(left_coppelia) + T

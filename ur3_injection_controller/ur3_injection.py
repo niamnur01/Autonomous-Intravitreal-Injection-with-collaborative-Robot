@@ -15,17 +15,22 @@ import pyquaternion as pyq
 import transforms3d.euler as eul
 import transforms3d.quaternions as quat
 
+from std_srvs.srv import Trigger
+import json
+
 
 DATASET_NUMBER_STD_DEVIATION = 40
-STABILITY_THRESHOLD = 0.01
+STABILITY_THRESHOLD = 0.002
 
 EYE_RADIUS = 0.015
+SAFE_DISTANCE = 0.03
 INJECTION_DEPTH = 0.005
 
 class Phase(Enum):
     APPROACH = auto()
     INJECT   = auto()
     POSITION = auto()
+    DEPLOY   = auto()
     RETRACT  = auto()
     DISPLACE = auto()
     HOME     = auto()
@@ -36,10 +41,7 @@ class Ur3_controller(Node):
         # Initializing class
         super().__init__('ur3_controller')
 
-        # ─── fetch eye center from /get_eye_centers ────────────────────────────
-        from std_srvs.srv import Trigger
-        import json
-
+        # fetch eye center from /get_eye_centers
         self.get_logger().info("Calling /get_eye_centers…")
         eye_cli = self.create_client(Trigger, '/get_eye_centers')
         while not eye_cli.wait_for_service(timeout_sec=1.0):
@@ -55,7 +57,7 @@ class Ur3_controller(Node):
 
         centers = json.loads(trig_resp.message)
         # hardcode choice for now:
-        chosen = centers['left_center']
+        chosen = centers['right_center']
         # store as numpy array for all later use
         self.target_position = np.array(chosen)
         self.get_logger().info(f"Using eye center: {self.target_position}")
@@ -76,7 +78,7 @@ class Ur3_controller(Node):
         self.req = Pose.Request()
 
         # Creating publisher to publish planning
-        self.publisher = self.create_publisher(PoseStamped, 'fsm_target_frame', 10)
+        self.publisher = self.create_publisher(PoseStamped, 'target_frame', 10)
 
         #end effector pose buffer
         self.tf_buffer = Buffer()
@@ -84,12 +86,9 @@ class Ur3_controller(Node):
 
         # Getting current configuration 
         self.homing_pose = self.get_pose()
-                                
-        # Setting safe distance from the center of the eye
-        self.safe_distance = 0.02 #[m]
 
         ##Define vector rotation for injection trajectory, prepare rotation matrix
-        yaw_deg = 50 # or any value within [-80, 80] for left eye, and [100, 260] for right eye
+        yaw_deg = 100 # or any value within [-80, 80] for left eye, and [100, 260] for right eye
         pitch_deg = 45.5 # or a sample within [44.5, 46.5]
         R_pitch = eul.euler2mat(0, np.deg2rad(pitch_deg), 0, 'sxyz')
         R_yaw = eul.euler2mat(0, 0, np.deg2rad(yaw_deg), 'sxyz')
@@ -102,12 +101,21 @@ class Ur3_controller(Node):
         # Wait for stability before proceeding
         self.eye_check_timer = self.create_timer(0.2, self.eye_ready_check)
 
+        # Needle orientation for stable alignement through injection and retraction
+        self.sequence_inj_point = None
+        self.sequence_q_tool = None
+        self.sequence_tool_z = None
+
         # create periodic FSM driver (50Hz)
         self.timer = self.create_timer(1.0/50.0, self._fsm_step)
 
         #New injection cycle control
         self.waiting_for_user = False
         self.user_input_timer = self.create_timer(1.0, self.check_user_input)
+
+        # --- DEPLOY phase state (non-blocking timer) ---
+        self.deploy_timer = None
+        self.deploy_done = False
         
     def _fsm_step(self):
         if self.waiting_for_stable_eye:
@@ -141,10 +149,19 @@ class Ur3_controller(Node):
                _ = self.get_eye_orientation(0)
                if not self.stability_check:
                    self.get_logger().warn('Eye moved—aborting injection, retracting!')
-                   self.phase = Phase.HOME
+                   self.phase = Phase.RETRACT
                    return #avoid checking at_target
             if self.at_target(self.injection_target):
-                self.get_logger().info('Injection reached; moving to RETRACT')
+                self.get_logger().info('Injection reached; moving to DEPLOY')
+                self.phase = Phase.DEPLOY
+        
+        elif self.phase == Phase.DEPLOY:
+            if not self.phase_sent[Phase.DEPLOY]:
+                self.get_logger().info('Phase: DEPLOY -> holding for 2.5s')
+                self.start_deploy_timer(2.5)
+                self.phase_sent[Phase.DEPLOY] = True
+            elif self.deploy_done:
+                self.get_logger().info('DEPLOY timer elapsed; moving to RETRACT')
                 self.phase = Phase.RETRACT
 
         elif self.phase == Phase.RETRACT:
@@ -177,10 +194,17 @@ class Ur3_controller(Node):
             self.get_logger().info("Stable eye orientation detected — restarting FSM.")
             self.stability_check = False
             self.phase_sent = {p: False for p in Phase}
+            if self.deploy_timer is not None:
+                try:
+                    self.deploy_timer.cancel()
+                except Exception:
+                    pass
+                self.deploy_timer = None
+            self.deploy_done = False
             self.waiting_for_stable_eye = False
             self.phase = Phase.IDLE
 
-    def motion_approaching_target(self):
+    def motion_approaching_target(self): 
         # 1) Get a neutral approach orientation / injection point
         eye_pos    = self.target_position
         eye_ori    = self.get_eye_orientation(0)
@@ -192,24 +216,21 @@ class Ur3_controller(Node):
             2 * (ori[2]*ori[3] - ori[0]*ori[1]),
             1 - 2*(ori[1]**2 + ori[2]**2)
         ])
-        approach_pt = inj_pt - self.safe_distance * tool_z
+        approach_pt = inj_pt - SAFE_DISTANCE * tool_z
+
+        self.sequence_q_tool = ori
+        self.sequence_inj_point = inj_pt
+        self.sequence_tool_z = tool_z
 
         # 3) Plan & publish trajectory from current_pose → approach_pt
         self.approach_target = np.concatenate((approach_pt, ori))
         self.publish_pose(approach_pt, ori)
 
     def motion_eye_injection(self):
-        # Compute injection point and orientation
-        eye_position = self.target_position  # Already in world frame
-        eye_orientation = self.get_eye_orientation(0)  # [w, x, y, z]
-        inj_point, inj_orientation = self.compute_injection_pose_from_eye_frame(eye_position, eye_orientation)
+        inj_point = self.sequence_inj_point
+        inj_orientation = self.sequence_q_tool
+        tool_z = self.sequence_tool_z
 
-        # Move back along the tool's z-axis by injection depth
-        tool_z = np.array([
-            2 * (inj_orientation[1] * inj_orientation[3] + inj_orientation[0] * inj_orientation[2]),
-            2 * (inj_orientation[2] * inj_orientation[3] - inj_orientation[0] * inj_orientation[1]),
-            1 - 2 * (inj_orientation[1]**2 + inj_orientation[2]**2)
-        ])
         position = inj_point + INJECTION_DEPTH * tool_z
 
         # Compute and execute trajectory
@@ -217,17 +238,10 @@ class Ur3_controller(Node):
         self.publish_pose(position, inj_orientation)
 
     def motion_eye_retraction(self):
-        # Compute injection point and orientation
-        eye_position = self.target_position  # Already in world frame
-        eye_orientation = self.get_eye_orientation(0)  # [w, x, y, z]
-        inj_point, inj_orientation = self.compute_injection_pose_from_eye_frame(eye_position, eye_orientation)
-
-        # Move back along the tool's z-axis by injection depth
-        tool_z = np.array([
-            2 * (inj_orientation[1] * inj_orientation[3] + inj_orientation[0] * inj_orientation[2]),
-            2 * (inj_orientation[2] * inj_orientation[3] - inj_orientation[0] * inj_orientation[1]),
-            1 - 2 * (inj_orientation[1]**2 + inj_orientation[2]**2)
-        ])
+        inj_point = self.sequence_inj_point
+        inj_orientation = self.sequence_q_tool
+        tool_z = self.sequence_tool_z
+        
         position = inj_point - INJECTION_DEPTH * tool_z
 
         # Compute and execute trajectory
@@ -313,7 +327,7 @@ class Ur3_controller(Node):
 
             std = np.std(self.variation_buffer, ddof=1, axis=0)
             std_mean = np.mean(std)
-            #elf.get_logger().info(f"Stability check: std_mean = {std_mean:.6f} → check = {std_mean < STABILITY_THRESHOLD}")
+            #self.get_logger().info(f"Stability check: std_mean = {std_mean:.6f} → check = {std_mean < STABILITY_THRESHOLD}")
             self.stability_check = (std_mean < STABILITY_THRESHOLD)
 
     def get_eye_orientation(self, request):
@@ -360,7 +374,7 @@ class Ur3_controller(Node):
             x ∈ [0.050, 0.085]
             y ∈ [0.253, 0.268]'''
         x, y = q[1], q[2] #assuming q=[w,x,y,z]
-        return (0.07<= x  and y <=-0.110)
+        return (0.07<= x  and y >=-0.110)
 
     
     def publish_pose(self, position, orientation):
@@ -389,7 +403,7 @@ class Ur3_controller(Node):
 
         return np.array([q.w, q.x, q.y, q.z])
 
-    def at_target(self, target, pos_tol=0.0025, ori_tol=0.025):
+    def at_target(self, target, pos_tol=0.001, ori_tol=0.01):
         actual = self.get_pose()
         pos_err = np.linalg.norm(actual[:3] - target[:3])
 
@@ -420,10 +434,39 @@ class Ur3_controller(Node):
                 self.waiting_for_stable_eye = True    
                 self.waiting_for_user = False
                 self.phase_sent = {p: False for p in Phase}
+                if self.deploy_timer is not None:
+                    try:
+                        self.deploy_timer.cancel()
+                    except Exception:
+                        pass
+                    self.deploy_timer = None
+                self.deploy_done = False
                 self.phase = Phase.IDLE
             elif choice == 'q':
                 self.get_logger().info("Shutting down node.")
                 rclpy.shutdown()
+
+    def start_deploy_timer(self, seconds: float = 2.5):
+        # Cancel any previous timer (defensive)
+        if self.deploy_timer is not None:
+            try:
+                self.deploy_timer.cancel()
+            except Exception:
+                pass
+        self.deploy_done = False
+        # create_timer returns a periodic timer; we'll cancel it in the callback
+        self.deploy_timer = self.create_timer(seconds, self.on_deploy_done)
+
+    def on_deploy_done(self):
+        # Timer fired once → mark done and cancel so it doesn't repeat
+        self.deploy_done = True
+        if self.deploy_timer is not None:
+            try:
+                self.deploy_timer.cancel()
+            except Exception:
+                pass
+            self.deploy_timer = None
+
 
     
 def main():
