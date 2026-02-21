@@ -252,15 +252,15 @@ This section provides a quick reference for the most common settings you may wan
 ### `ur3_injection`
 *File: `ros2_ws/src/ur3_injection_controller/ur3_injection_controller/ur3_injection.py`*
 
-- **Eye selection:** To target the right eye instead of the left, change `"left"` to `"right"`:
+- **Eye selection:** To target the right eye instead of the left, change `"Eye.LEFT"` to `"Eye.RIGHT"`:  or 
 ```python
-60        chosen = centers['left_center']
+64        self.target = Eye.LEFT   # Eye.LEFT or Eye.RIGHT
 ```
 
 - **Injection vector:** Update the yaw and pitch to your desired injection angle:
 ```python
-91        yaw_deg = 50    # any value within [-80, 80] for left eye, [100, 260] for right eye
-92        pitch_deg = 45.5  # within [44.5, 46.5]
+96        yaw_deg = 50    # any value within [-80, 80] for left eye, [100, 260] for right eye
+97        pitch_deg = 45.5  # within [44.5, 46.5]
 ```
 
 
@@ -269,13 +269,13 @@ This section provides a quick reference for the most common settings you may wan
 
 - **Target eye position:** Adjust the coordinates to match the position of the target eye in CoppeliaSim:
 ```python
-36    EYE_POSITION = (-0.164, 0.35274, 0.629)  # [m]
+37    EYE_POSITION = (-0.164, 0.35274, 0.629)  # [m]
 ```
 
 - **Injection vector:** Same as above, update yaw and pitch as needed:
 ```python
-65        yaw_deg = 50    # any value within [-80, 80] for left eye, [100, 260] for right eye
-66        pitch_deg = 45.5  # within [44.5, 46.5]
+66        yaw_deg = 50    # any value within [-80, 80] for left eye, [100, 260] for right eye
+67        pitch_deg = 45.5  # within [44.5, 46.5]
 ```
 
 ### Robot Controller — Initial Configuration

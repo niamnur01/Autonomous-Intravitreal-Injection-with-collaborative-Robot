@@ -26,6 +26,10 @@ EYE_RADIUS = 0.015
 SAFE_DISTANCE = 0.03
 INJECTION_DEPTH = 0.005
 
+class Eye(Enum):
+    LEFT  = 'left_center'
+    RIGHT = 'right_center'
+
 class Phase(Enum):
     APPROACH = auto()
     INJECT   = auto()
@@ -57,8 +61,9 @@ class Ur3_controller(Node):
 
         centers = json.loads(trig_resp.message)
         # hardcode choice for now:
-        chosen = centers['left_center']
+        self.target = Eye.LEFT   # Eye.LEFT or Eye.RIGHT
         # store as numpy array for all later use
+        chosen = centers[self.target.value]
         self.target_position = np.array(chosen)
         self.get_logger().info(f"Using eye center: {self.target_position}")
    
@@ -113,7 +118,7 @@ class Ur3_controller(Node):
         self.waiting_for_user = False
         self.user_input_timer = self.create_timer(1.0, self.check_user_input)
 
-        # --- DEPLOY phase state (non-blocking timer) ---
+        #  DEPLOY phase state (non-blocking timer)
         self.deploy_timer = None
         self.deploy_done = False
         
@@ -363,18 +368,14 @@ class Ur3_controller(Node):
     def valid_gaze_range(self, q):
         if np.allclose(q, np.zeros(4)):
             return False
-        '''Ranges for right eye, left should be specular
-        # Extreme Up-Left (toward root of the nose)
-            x ∈ [0.105, 0.130]
-            y ∈ [-0.27, -0.24]
-        # Extreme Up-Right
-            x ∈ [-0.20, -0.17]
-            y ∈ [-0.11, -0.08]
-        # Extreme Down-Left
-            x ∈ [0.050, 0.085]
-            y ∈ [0.253, 0.268]'''
-        x, y = q[1], q[2] #assuming q=[w,x,y,z]
-        return (0.07<= x  and y >=-0.110)
+
+        x, y = q[1], q[2]  # assuming q = [w, x, y, z]
+
+        if self.target == Eye.LEFT:
+            return (0.095 <= x <= 0.135 and -0.260 <= y <= -0.220)
+        elif self.target == Eye.RIGHT:
+            return (0.095 <= x <= 0.135 and 0.220 <= y <= 0.260)
+        return False
 
     
     def publish_pose(self, position, orientation):
@@ -407,7 +408,6 @@ class Ur3_controller(Node):
         actual = self.get_pose()
         pos_err = np.linalg.norm(actual[:3] - target[:3])
 
-        # --- Orientation error (sign-invariant) ---
         qa = actual[3:].astype(float)
         qt = target[3:].astype(float)
         # normalize (required so the dot gives a true rotation angle)

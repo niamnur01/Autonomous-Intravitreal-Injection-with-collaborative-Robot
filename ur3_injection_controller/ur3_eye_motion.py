@@ -74,7 +74,6 @@ class PosePrinter(Node):
         self.marker_array_pub = self.create_publisher(MarkerArray, 'visualization_marker_array', 10)
         self.current_position = np.array(EYE_POSITION, dtype=float)
 
-        # --- File logging setup ---
         self.error_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "test", "E_E error logs") #__file__/../test/E_E error logs
         # Clear file at start
         try:
@@ -83,7 +82,6 @@ class PosePrinter(Node):
         except Exception as e:
             self.get_logger().warn(f'Could not initialize error log file: {e}')
 
-    # ---------- math helpers ----------
     def quaternion_multiply(self, q1_arr, q0_arr):
         q1 = pyq.Quaternion(q1_arr)
         q0 = pyq.Quaternion(q0_arr)
@@ -106,7 +104,6 @@ class PosePrinter(Node):
         dot = np.clip(np.dot(u_n, v_n), -1.0, 1.0)
         return float(np.arccos(dot))  # radians
 
-    # ---------- robot pose via TF ----------
     def get_pose(self):
         """Return [x, y, z, w, x, y, z] of tool0 in base_link."""
         while rclpy.ok():
@@ -131,7 +128,6 @@ class PosePrinter(Node):
                 self.get_logger().warn(f'Could not transform: {ex}')
                 time.sleep(0.05)
 
-    # ---------- error computation ----------
     def compute_errors(self, ee_pose, line_point, line_dir):
         """Compute (angle_error_rad, lateral_distance_m, along_projection_m, point_error_m, z_axis, cartesian_err_xyz).
         Inputs are in base_link.
@@ -157,7 +153,6 @@ class PosePrinter(Node):
        # Cartesian error (target - current)
         cart_err = line_point - p
 
-
         # For lateral distance, use r = (current - target)
         r = -cart_err
         # New along sign convention (mostly positive toward target along +d)
@@ -168,7 +163,6 @@ class PosePrinter(Node):
 
         return ang, lateral, along, point_error, z_axis, cart_err
 
-    # ---------- main render/logic ----------
     def run(self):
         while rclpy.ok():
             # Call service

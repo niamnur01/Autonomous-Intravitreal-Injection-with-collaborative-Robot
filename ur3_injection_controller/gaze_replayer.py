@@ -21,7 +21,7 @@ class EyeGazeReplayer(Node):
 
         self.publisher_ = self.create_publisher(Float64MultiArray, '/eye_gaze', 10)
         
-        file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "test", "eye_movement.txt")
+        file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "test", "eye_movement.txt") #__file__/../eye_movement.txt
         self.data = self.load_data(file_path)
 
         self.timer_period = 0.1    # 10 Hz
