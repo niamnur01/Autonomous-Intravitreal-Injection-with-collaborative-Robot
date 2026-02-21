@@ -135,7 +135,7 @@ Before clicking the play button, make sure to select **MuJoCo** as the simulatio
 Then click the play button; the robot will move to a predefined HOMING joint configuration.
 
 #### 2. Ocular mapping:
-In a new terminal localize the eyes while they are directed forward (repeat step 0.):
+In a new terminal localize the eyes while they are directed forward (repeat step 0.)
 ```
 ros2 run ur3_injection_controller eye_sphere_tracker --calib-frames 25
 ```
@@ -151,14 +151,14 @@ ros2 launch ur_coppeliasim ur_coppelia_controllers.launch.py
 ```
 
 #### 4. Gaze tracking node:
-Start the gaze tracker while your face is clearly visible to the webcam
+Start the gaze tracker while your face is clearly visible to the webcam  (repeat step 0.)
 ```
 ros2 run ur3_injection_controller eye_tracking
 ```
 A small window should appear with your webcam view
 
 #### 5. Injection node
-Assuming that the controller is running you can run the remaining node in the last terminal (repeat step 0.):
+Assuming that the controller is running you can run the remaining node in the last terminal (repeat step 0.)
 ```
 ros2 run ur3_injection_controller ur3_injection
 ```
@@ -174,10 +174,7 @@ Two additional scripts are available to extend the simulation with extra functio
 
 This node substitutes the `eye_tracking` node by publishing pre-recorded gaze angles on the gaze topic. This allows the simulation to run without requiring the user to physically rotate their eyes to the angle needed for the procedure.
 
-The node reads and publishes the orientations found in:
-```
-ros2_ws/src/ur3_injection_controller/test/eye_movement.txt
-```
+The node reads and publishes the orientations found in *`ros2_ws/src/ur3_injection_controller/test/eye_movement.txt`*
 
 The `ros2_ws/src/ur3_injection_controller/test` folder contains the following files:
 - **`eye_movement.txt`** — currently contains the orientation required to target the left eye.
