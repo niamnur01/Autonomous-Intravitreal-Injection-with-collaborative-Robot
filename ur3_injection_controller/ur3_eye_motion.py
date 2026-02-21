@@ -15,6 +15,7 @@ import numpy as np
 import transforms3d.euler as euler
 import transforms3d.quaternions as quat
 import pyquaternion as pyq
+import os
 
 import rclpy
 from rclpy.node import Node
@@ -62,8 +63,8 @@ class PosePrinter(Node):
         self.req = Pose.Request()
 
         # Define vector rotation for injection trajectory, prepare rotation matrix for environment_building
-        yaw_deg = 100  # or any value within [-80, 80] for left eye, and [100, 260] for right eye
-        pitch_deg = 45.5  # or a sample within [44.5, 46.5]
+        yaw_deg = 50         #or any value within [-80, 80] for left eye, and [100, 260] for right eye
+        pitch_deg = 45.5     #or a sample within [44.5, 46.5]
         R_pitch = euler.euler2mat(0, np.deg2rad(pitch_deg), 0, 'sxyz')
         R_yaw = euler.euler2mat(0, 0, np.deg2rad(yaw_deg), 'sxyz')
         self.R_inject = R_yaw @ R_pitch
@@ -74,7 +75,7 @@ class PosePrinter(Node):
         self.current_position = np.array(EYE_POSITION, dtype=float)
 
         # --- File logging setup ---
-        self.error_log_path = 'E_E error logs' # per user request, including spaces
+        self.error_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "test", "E_E error logs") #__file__/../test/E_E error logs
         # Clear file at start
         try:
             with open(self.error_log_path, 'w') as f:

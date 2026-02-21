@@ -57,7 +57,7 @@ class Ur3_controller(Node):
 
         centers = json.loads(trig_resp.message)
         # hardcode choice for now:
-        chosen = centers['right_center']
+        chosen = centers['left_center']
         # store as numpy array for all later use
         self.target_position = np.array(chosen)
         self.get_logger().info(f"Using eye center: {self.target_position}")
@@ -88,8 +88,8 @@ class Ur3_controller(Node):
         self.homing_pose = self.get_pose()
 
         ##Define vector rotation for injection trajectory, prepare rotation matrix
-        yaw_deg = 100 # or any value within [-80, 80] for left eye, and [100, 260] for right eye
-        pitch_deg = 45.5 # or a sample within [44.5, 46.5]
+        yaw_deg = 50        #or any value within [-80, 80] for left eye, and [100, 260] for right eye
+        pitch_deg = 45.5    #or a sample within [44.5, 46.5]
         R_pitch = eul.euler2mat(0, np.deg2rad(pitch_deg), 0, 'sxyz')
         R_yaw = eul.euler2mat(0, 0, np.deg2rad(yaw_deg), 'sxyz')
         self.R_inject = R_yaw @ R_pitch

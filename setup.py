@@ -25,7 +25,6 @@ setup(
             'eye_sphere_tracker = ur3_injection_controller.eye_sphere_tracker:main',
             'ur3_eye_motion = ur3_injection_controller.ur3_eye_motion:main',
             'gaze_replayer = ur3_injection_controller.gaze_replayer:main',
-            'injection_path_planner = ur3_injection_controller.injection_path_planner:main'
         ],
     },
 )
