@@ -10,7 +10,7 @@ This repository provides a ROS2 package, which implements a UR3e performing an a
 #### 1. Required dependencies
 Install the following dependencies:
 ```
-pip install setuptools==version wheel==version matplotlib==3.3.4 numpy==1.19.5 opencv-python==4.5.5 pandas==1.1.5 Pillow==8.4.0 scipy==1.5.4 torch==1.10.1 torchvision==0.11.2 
+ pip install setuptools wheel matplotlib==3.3.4 numpy==1.19.5 opencv-python==4.5.5 pandas==1.1.5 Pillow==8.4.0 scipy==1.5.4 torch==1.10.1 torchvision==0.11.2 mediapipe==0.10.21 face-detection==1.0.5 pyquaternion filterpy==1.25.0 transforms3d
 ```
 ```
 pip install git+https://github.com/hukkelas/DSFD-Pytorch-Inference.git
