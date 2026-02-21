@@ -164,6 +164,8 @@ ros2 run ur3_injection_controller ur3_injection
 ```
 The robot will start moving in CoppeliaSim
 
+---
+
 > **Important — Left/Right Eye Convention:** Throughout the scripts, "left" and "right" refer to the perspective of the RGB-D sensor, not the patient. For example, the "left eye" in this codebase is the patient's right eye as seen from the camera's point of view.
 
 ## Simulation Support
@@ -246,7 +248,6 @@ This section provides a quick reference for the most common settings you may wan
 63        self.T = np.array([-0.1301, -0.24275, 0.60139])
 ```
 
----
 
 ### `ur3_injection`
 *File: `ros2_ws/src/ur3_injection_controller/ur3_injection_controller/ur3_injection.py`*
@@ -262,7 +263,6 @@ This section provides a quick reference for the most common settings you may wan
 92        pitch_deg = 45.5  # within [44.5, 46.5]
 ```
 
----
 
 ### `ur3_eye_motion`
 *File: `ros2_ws/src/ur3_injection_controller/ur3_injection_controller/ur3_eye_motion.py`*
@@ -277,8 +277,6 @@ This section provides a quick reference for the most common settings you may wan
 65        yaw_deg = 50    # any value within [-80, 80] for left eye, [100, 260] for right eye
 66        pitch_deg = 45.5  # within [44.5, 46.5]
 ```
-
----
 
 ### Robot Controller — Initial Configuration
 If you change the robot's starting configuration in CoppeliaSim, make sure to update the following two files with the same joint values:
@@ -297,8 +295,6 @@ wrist_3_joint: 3.14
 ```cpp
 143    float initial_conf[]={1.55, -0.65, -1.8, -1.0, -1.55, 3.14};
 ```
-
----
 
 ### Robot Controller — Motion Gains
 *File: `ros2_ws/src/ur_coppeliasim/config/ur_controllers_coppeliasim.yaml`*
