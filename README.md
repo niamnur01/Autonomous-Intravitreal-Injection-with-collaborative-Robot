@@ -1,6 +1,6 @@
 # Autonomous Intravitreal Injection with collaborative Robot
 This repository provides a ROS2 package, which implements a UR3e performing an autonomous injection, following the eye motion in real-time.
-
+[close homing pose injection.webm](https://github.com/user-attachments/assets/4293f9f2-9474-4852-bf4e-25faa0749276)
 ## Installation
 
 ### Setup
